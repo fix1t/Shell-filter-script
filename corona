@@ -1,0 +1,487 @@
+#! /bin/bash
+
+export POSIXLY_CORRECT=yes
+export LC_NUMERIC=en_US.UTF-8
+
+
+
+print_help() 
+{
+    echo "Usage:    corona [-h]"
+    echo "          corona [FILTERS] [COMMAND] [LOG [LOG2 [...]]"
+    echo ""
+    echo "The script filters records of people with proven coronavirus infection causing COVID-19."
+    echo "If a command is also specified in the script, it executes the command over the filtered records."
+    echo "If there is more logs on input, logs will be processed in entered order."
+    echo ""
+    echo "Command is one of:" 
+    echo ""
+    echo "  age                 prints stat of infected by age group,"
+    echo "  countries           prints stat of infected by  foreign country,"
+    echo "  daily               prints stat of infected by days of the week,"
+    echo "  districts           prints stat of infected by disctrict,"
+    echo "  gender              prints stat of infected by gender,"
+    echo "  infected            prints stat of all infected,"
+    echo "  merge               merges all logs to one, keeping the order,"
+    echo "  mothly              prints stat of infected by month,"
+    echo "  regions             prints stat of infected by regions,"
+    echo "  yearly              prints stat of infected by year."
+    echo ""
+    echo "Filter can be combination of:"
+    echo ""
+    echo "  -a  DATETIME - after        works with logs after DATETIME"
+    echo "      DATETIME is in format YYYY-MM-DD"
+    echo "  -b  DATETIME - before       works with logs after DATETIME"
+    echo "      DATETIME is in format YYYY-MM-DD"
+    echo "  -g  GENDER                  works with logs of GENDER"
+    echo "      GENDER is in format M(male)/Z(female)"
+    echo "  -s  WIDTH                   sets max width of histgram"
+    echo "      WIDTH is in format unsigned integer"
+    echo ""
+    echo "Log files:"
+    echo ""
+    echo "Script woks with files *.csv *.gz *.bz2"
+}
+
+check_date()
+{
+    #check date format format check && valid date
+    if [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [ -n "$2" ] && [ "$(date -d "$2" +%Y-%m-%d 2> /dev/null)" = "$2" ]
+    then
+        return
+    else
+        >2& echo "ERROR: DATETIME argument is not valid."
+        exit 1
+    fi
+}
+
+#arg 1 value of a|b|g|s
+#arg 2 f[file] | c[command] 
+check_if_entered()
+{
+    if [[ $2 == "f" && $c == 1 ]] ||  [[ $2 == "f" && $LOG_COUNT > 0 ]] || [[ $2 == "c" && $LOG_COUNT > 0  ]]
+    then
+        >&2 echo "ERROR: Wrong order of arguments."
+        exit 1 
+    fi
+    if [ $1 -ne 0 ] 
+    then
+        case $2 in
+            f) 
+            >&2 echo "ERROR: Each filter can be applied just once."
+            ;;
+            c) 
+            >&2 echo "ERROR: You can only use one command."
+            ;;
+    esac
+    exit 1
+    fi 
+    return 0
+}
+#filter function 
+#TODO ODSTRANIT RIADOK,KT ZACINA 
+filter()
+{
+        awk \
+        -v command=$COMMAND \
+        -v gender=$GENDER \
+        -v a_date_time="$A_DATE_TIME" \
+        -v b_date_time="$B_DATE_TIME" \
+        -F ',' \
+        '{
+            if(command == "merge" && NR == 1) { print $0 ; next } 
+            if  (gender != "")
+            { 
+                if ($4 != gender)
+                next 
+            } 
+            if ($2 < a_date_time)
+                next
+            if ($2 > b_date_time)
+                next
+            print $0
+        }'
+}
+
+#1 argumen is [width] 
+histogram_function()
+{
+    x=$(awk '{print}')
+    if (( $s == 0)) 
+    then
+        echo "$x" | awk '{print}'
+        return
+    elif (( $s == 2))
+    then
+        MAXVAL=$(echo "$x" | awk -F: -v maxval=0 'END{print maxval};{ if(maxval < $2) maxval=$2}')
+        WIDTH=$(($MAXVAL / $WIDTH))
+        if (( $WIDTH == 0)) 
+        then
+            >&2 echo "ERROR: Parameter [WIDTH] is too big."
+            exit 1
+        fi
+    else
+        WIDTH=$1
+    fi
+    echo "$x" | awk -F: -v WIDTH=$WIDTH \
+    '{
+        HASHES=sprintf("%*s",$2/WIDTH,"#") ; 
+        gsub(" ", "#", HASHES);
+        print $1": "HASHES 
+    }' 
+}
+
+#==================
+#infected
+#simple wordcount function with -l parameter for lines
+infected()
+{
+    wc -l 
+}
+
+#==================
+#gender
+#count all instances of M/Z
+#if histogram  ->  print HASH for every 100_000 occurrences
+#if histagram with custom width -> [NEW_WIDTH] = (bigger val of)[M]or[Z]/[WIDTH] -> print HASH for every [NEW_WIDTH]
+gender()
+{
+    awk -F ',' -v M=0 -v Z=0 -v HISTOGRAM=$s -v WIDTH=$WIDTH \
+    '{if( $4 == "M" ) { M++ } if( $4 == "Z" ) { Z++ } }
+    END {
+        if (HISTOGRAM == 0) { print "M: "M ; print "Z: "Z} 
+        else if (HISTOGRAM == 1) 
+            {
+                if( M != 0){ HASHES=sprintf("%*s",M/100000,"#") ; gsub(" ", "#", HASHES);print "M: "HASHES } 
+                    else print "M: " 
+                if( Z != 0){ HASHES=sprintf("%*s",Z/100000,"#") ; gsub(" ", "#", HASHES);print "Z: "HASHES } 
+                    else print "Z: "
+            }
+        else if (HISTOGRAM == 2) 
+            {
+                if( M > Z ) { WIDTH=M/WIDTH } else { WIDTH=Z/WIDTH }
+                if( M != 0){ HASHES=sprintf("%*s",M/WIDTH,"#") ; gsub(" ", "#", HASHES);print "M: "HASHES }
+                    else print "M: "
+                if( Z != 0){ HASHES=sprintf("%*s",Z/WIDTH,"#") ; gsub(" ", "#", HASHES);print "Z: "HASHES }
+                    else print "Z: "
+            }   
+            }'
+}
+
+#==================
+#read through file
+#values to variables 
+
+#TODO  GET MAX FOR [WIDTH] use gawk 
+age()
+{
+    awk -F ',' -v a1=0 -v a2=0 -v a3=0 -v a4=0 -v a5=0 -v a6=0 \
+    -v a7=0 -v a8=0 -v a9=0 -v a10=0 -v a11=0 -v a12=0 -v none=0 \
+    '{
+        if ( $3 >= 0 && $3 <=5 )
+            a1++
+        else if ( $3 > 5 && $3 <=15 )
+            a2++
+        else if ( $3 > 15 && $3 <=25 )
+            a3++
+        else if ( $3 > 25 && $3 <=35 )
+            a4++
+        else if ( $3 > 35 && $3 <=45 )
+            a5++
+        else if ( $3 > 45 && $3 <=55 )
+            a6++
+        else if ( $3 > 55 && $3 <=65 )
+            a7++
+        else if ( $3 > 65 && $3 <=75 )
+            a8++
+        else if ( $3 > 75 && $3 <=85 )
+            a9++
+        else if ( $3 > 85 && $3 <=95 )
+            a10++
+        else if ( $3 > 95 && $3 <=105 )
+            a11++
+        else if ( $3 >105 )
+            a12++
+        else none++
+    }
+    END{
+        if(a1 > 0) 
+            print "0-5   : "a1
+        if(a2 > 0) 
+            print "6-15  : "a2
+        if(a3 > 0)
+            print "16-25 : "a3
+        if(a4 > 0)
+            print "26-35 : "a4
+        if(a5 > 0)
+            print "36-45 : "a5
+        if(a6 > 0)
+            print "46-55 : "a6
+        if(a7 > 0)
+            print "56-65 : "a7
+        if(a8 > 0)
+            print "66-75 : "a8
+        if(a9 > 0)
+            print "76-85 : "a9
+        if(a10 > 0)
+            print "86-95 : "a10
+        if(a11 > 0)
+            print "96-105: "a11
+        if(a12 > 0)
+            print ">105  : "a12
+        if(none > 0)
+            print "none  : "none
+    }' | histogram_function 10000
+}
+
+
+#==================
+#daily
+#TO DO 
+daily()
+{
+    awk -F ',' $2 \
+    'END{for(i in array){if( array[$2] != "") print i": "array[i]; else print "none: "array[i]}}
+    { 
+        if(array[$2] == "") 
+            { array[$2]++; array[$2]=1} 
+        else 
+        {array[$2]+=1}  
+    }' | sort | histogram_function 500
+}
+#==================
+#montly
+monthly()
+{
+    awk -F ',' '{print $2}' | \
+    awk -F '-'  \
+    'END{for(i in array){print i": "array[i]}}
+    { 
+        if(array[$1"-"$2] == "") 
+        {
+            array[$1"-"$2]++; array[$1"-"$2]=1
+        } 
+        else if( array[$1"-"$2] != "")
+        {
+            array[$1"-"$2]+=1
+        }  
+    }' | sort | histogram_function 10000
+}
+#==================
+#yearly
+yearly()
+{
+    awk -F ',' '{print $2}' | \
+    awk -F '-'  \
+    'END{for(i in array){print i": "array[i]}}
+    { 
+        if(array[$1] == "") 
+        {   
+            array[$1]++; array[$1]=1
+        } 
+        else if( array[$1] != "")
+        {
+            array[$1]+=1
+        }  
+        }' | sort | histogram_function 100000
+}
+#==================
+#countries
+countries()
+{
+    awk -F ',' '{print $8}' | \
+    awk -F '-'  \
+    'END{for(i in array){if(i != "") print i": "array[i]}}
+    { 
+        if(array[$1] == "") 
+        {   
+            array[$1]++; array[$1]=1
+        } 
+        else if( array[$1] != "")
+        {
+            array[$1]+=1
+        }  
+        }' | sort | histogram_function 100
+}
+#==================
+#districts
+districts()
+{
+    awk -F ',' '{print $6}' | \
+    awk -F '-'  \
+    'END{for(i in array){if(i != "") print i": "array[i]; else print "none: "array[i]}}
+    { 
+        if(array[$1] == "") 
+        {   
+            array[$1]++; array[$1]=1
+        } 
+        else if( array[$1] != "")
+        {
+            array[$1]+=1
+        }  
+        }' | sort | histogram_function 1000
+}
+#==================
+#regions
+regions()
+{
+    awk -F ',' '{print $5}' | \
+    awk -F '-'  \
+    'END{for(i in array){if(i != "") print i": "array[i]; else print "none: "array[i]}}
+    { 
+        if(array[$1] == "") 
+        {   
+            array[$1]++; array[$1]=1
+        } 
+        else if( array[$1] != "")
+        {
+            array[$1]+=1
+        }  
+        }' | sort | histogram_function 10 000
+}
+
+#==================
+#merge
+merge()
+{
+    awk '{ print }' 
+}
+
+#==================
+#READ THROUGH ARGUMENTS
+#==================
+
+#variables to save arguments
+a=0
+b=0
+g=0
+s=0
+c=0
+A_DATE_TIME="0000-00-00"   #minimal valid time
+B_DATE_TIME="9999-99-99"   #maximal valid time
+COMMAND="merge"
+WIDTH=""
+GENDER=""
+LOG=""
+LOG_COUNT=0
+#TODO - check order of arguments
+#TODO - vstup cez stdin 
+while [ "$#" -gt 0 ]
+do
+    case $1 in
+    #filters
+        -a) 
+            check_if_entered $a "f"
+            #filter # used
+            ((a=1))
+            #check if date is valid & set up variable
+            check_date $2
+            A_DATE_TIME=$2
+            shift
+            shift
+        ;;
+        -b) 
+            check_if_entered $b "f"
+            #filter # used
+            ((b=1))
+            #check if date is valid & set up variable
+            check_date $2
+            B_DATE_TIME=$2
+            shift
+            shift
+        ;;
+        -g)
+            check_if_entered $g "f"
+            #filter # used
+            ((g=1))
+            #check if gender is valid & set up variable
+            if [[ "$2" == "M" ]] 
+            then
+                GENDER=$2
+            elif [[ "$2" == "Z" ]] 
+            then 
+                GENDER=$2
+            else  
+                >&2 echo "ERROR: Gender argument is not valid."
+                exit 1
+            fi
+            shift
+            shift
+        ;;
+        -s) 
+            check_if_entered $s "f"
+            #filter # used
+            ((s=1))
+            #check if param [WIDTH] is enered. [WIDTH] can only be a number
+            WIDTH=^[0-9]+$
+            if [[ $2 =~ $WIDTH ]]
+            then
+                WIDTH=$2
+                ((s=2))
+                shift
+            fi
+            shift
+        ;;
+    #commands 
+        gender | age | merge | infected | daily | monthly | yearly | countries | districts | regions) 
+                check_if_entered $c  "c"
+                ((c=1))
+                COMMAND="$1"
+                shift
+        ;;
+    #logs 
+        *.csv | *.gz | *.bz2) 
+                LOG[$LOG_COUNT]="$1"
+                LOG_COUNT=$(($LOG_COUNT + 1))
+                shift
+        ;;
+    #help
+        -h | --h)
+                print_help
+                exit 0
+        ;;
+    #else
+        id* )
+                echo "stdiIN"
+                exit 1
+        ;;
+        *)      
+                >&2 echo "ERROR: Invalid operator."
+                exit 1      
+        ;;
+    esac
+done
+
+#FILE NOT ENTERED
+if [[ $LOG_COUNT == 0 && $INPUT == "" ]]  
+then
+    >&2 echo "ERROR: File not entered."
+    exit 1   
+fi
+
+#==================
+#MERGE ALL INPUT
+
+for((i=0;i<$LOG_COUNT;i++));
+do
+    case ${LOG[$i]} in
+        *.csv) INPUT=$INPUT$(cat "${LOG[$i]}")"
+        " 
+        ;;
+        *.gz)  INPUT=$INPUT$(gzip -c -d "${LOG[$i]}")"
+        "
+        ;;
+        *.bz2) INPUT=$INPUT$(bzip2 -dc "${LOG[$i]}")"
+        "
+        ;;
+    esac
+done
+
+#==================
+#PIPE INPUT THROUGH FILTER TO COMMAND
+
+echo "$INPUT" | filter | $COMMAND
+
+
+
+
