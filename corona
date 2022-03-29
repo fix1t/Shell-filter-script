@@ -4,7 +4,7 @@ export POSIXLY_CORRECT=yes
 export LC_NUMERIC=en_US.UTF-8
 
 
-
+#pri usage of the script
 print_help() 
 {
     echo "Usage:    corona [-h]"
@@ -43,10 +43,10 @@ print_help()
     echo "Script woks with files *.csv *.gz *.bz2"
 }
 
+#checks if DATETIME parameter is ok
 check_date()
 {
-    #check date format format check && valid date
-    if [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [ -n "$2" ] && [ "$(date -d "$2" +%Y-%m-%d 2> /dev/null)" = "$2" ]
+    if [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && [ "$(date -d "$2" +%Y-%m-%d 2> /dev/null)" = "$2" ]
     then
         return
     else
@@ -55,6 +55,7 @@ check_date()
     fi
 }
 
+#check if arguments were already entered
 #arg 1 value of a|b|g|s
 #arg 2 f[file] | c[command] 
 check_if_entered()
@@ -78,8 +79,9 @@ check_if_entered()
     fi 
     return 0
 }
-#filter function 
-#TODO ODSTRANIT RIADOK,KT ZACINA 
+
+#filter input based on argumets 
+#if command is "merge" keep the 1st heading
 filter()
 {
         awk \
@@ -103,7 +105,9 @@ filter()
         }'
 }
 
-#1 argumen is [width] 
+#takes 1 argumen = [width]
+#input is data already filtered and with command applied therefore awk can split each record of data to data and number
+#if width is specifically find width for each hash  
 histogram_function()
 {
     x=$(awk '{print}')
@@ -123,27 +127,28 @@ histogram_function()
     else
         WIDTH=$1
     fi
-    echo "$x" | awk -F: -v WIDTH=$WIDTH \
+    echo "$x" | awk -F: -v WIDTH=$WIDTH -v last_record=$(echo "$x" | wc -l) \
     '{
+        if (NR == last_record ) {next} ;
         HASHES=sprintf("%*s",$2/WIDTH,"#") ; 
         gsub(" ", "#", HASHES);
-        print $1": "HASHES 
+        if($2 > WIDTH)print $1": "HASHES;
+        else print $1": " 
+        
     }' 
 }
 
-#==================
-#infected
 #simple wordcount function with -l parameter for lines
 infected()
 {
     wc -l 
 }
 
-#==================
-#gender
 #count all instances of M/Z
 #if histogram  ->  print HASH for every 100_000 occurrences
 #if histagram with custom width -> [NEW_WIDTH] = (bigger val of)[M]or[Z]/[WIDTH] -> print HASH for every [NEW_WIDTH]
+#side note: This was my first try to do the -s option. It works but it is not clean. 
+#           Couldnt be replicabe for command with more variable output.
 gender()
 {
     awk -F ',' -v M=0 -v Z=0 -v HISTOGRAM=$s -v WIDTH=$WIDTH \
@@ -168,11 +173,9 @@ gender()
             }'
 }
 
-#==================
-#read through file
-#values to variables 
-
-#TODO  GET MAX FOR [WIDTH] use gawk 
+#sort input data to age group
+#print output in format [age group]: [data]
+#output is by default sent to histogram function 
 age()
 {
     awk -F ',' -v a1=0 -v a2=0 -v a3=0 -v a4=0 -v a5=0 -v a6=0 \
@@ -235,9 +238,9 @@ age()
 }
 
 
-#==================
-#daily
-#TO DO 
+#find not seen data - add to array - count occurences 
+#print output in format [age group]: [data]
+#output is by default sent to histogram function
 daily()
 {
     awk -F ',' $2 \
@@ -249,8 +252,10 @@ daily()
         {array[$2]+=1}  
     }' | sort | histogram_function 500
 }
-#==================
-#montly
+
+#find not seen data - add to array - count occurences 
+#print output in format [age group]: [data]
+#output is by default sent to histogram function
 monthly()
 {
     awk -F ',' '{print $2}' | \
@@ -267,8 +272,10 @@ monthly()
         }  
     }' | sort | histogram_function 10000
 }
-#==================
-#yearly
+
+#find not seen data - add to array - count occurences 
+#print output in format [age group]: [data]
+#output is by default sent to histogram function
 yearly()
 {
     awk -F ',' '{print $2}' | \
@@ -285,8 +292,10 @@ yearly()
         }  
         }' | sort | histogram_function 100000
 }
-#==================
-#countries
+
+#find not seen data - add to array - count occurences 
+#print output in format [age group]: [data]
+#output is by default sent to histogram function
 countries()
 {
     awk -F ',' '{print $8}' | \
@@ -303,8 +312,10 @@ countries()
         }  
         }' | sort | histogram_function 100
 }
-#==================
-#districts
+
+#find not seen data - add to array - count occurences 
+#print output in format [age group]: [data]
+#output is by default sent to histogram function
 districts()
 {
     awk -F ',' '{print $6}' | \
@@ -321,8 +332,10 @@ districts()
         }  
         }' | sort | histogram_function 1000
 }
-#==================
-#regions
+
+#find not seen data - add to array - count occurences 
+#print output in format [age group]: [data]
+#output is by default sent to histogram function
 regions()
 {
     awk -F ',' '{print $5}' | \
@@ -340,32 +353,31 @@ regions()
         }' | sort | histogram_function 10 000
 }
 
-#==================
-#merge
+#print filtered input to stdout
 merge()
 {
     awk '{ print }' 
 }
 
-#==================
-#READ THROUGH ARGUMENTS
-#==================
+#====================================
+################MAIN#################
+#====================================
 
-#variables to save arguments
+#variables to check if argument was entered
 a=0
 b=0
 g=0
 s=0
 c=0
-A_DATE_TIME="0000-00-00"   #minimal valid time
-B_DATE_TIME="9999-99-99"   #maximal valid time
+#variables setup
+A_DATE_TIME="0000-00-00"   #minimal valid time - by default everything should pass
+B_DATE_TIME="9999-99-99"   #maximal valid time - by default everything should pass
 COMMAND="merge"
 WIDTH=""
 GENDER=""
 LOG=""
 LOG_COUNT=0
-#TODO - check order of arguments
-#TODO - vstup cez stdin 
+#read arguments
 while [ "$#" -gt 0 ]
 do
     case $1 in
@@ -441,16 +453,25 @@ do
                 exit 0
         ;;
     #else
-        id* )
-                echo "stdiIN"
-                exit 1
-        ;;
         *)      
                 >&2 echo "ERROR: Invalid operator."
                 exit 1      
         ;;
     esac
 done
+
+#STDIN
+if [[ -p /dev/stdin ]] 
+then
+    INPUT=$(cat -)
+fi
+
+#NULL 
+# if [[ $INPUT == NULL ]]
+# then
+#     echo "id,datum,vek,pohlavi,kraj_nuts_kod,okres_lau_kod,nakaza_v_zahranici,nakaza_zeme_csu_kod,reportovano_khs"
+#     exit 0
+# fi
 
 #FILE NOT ENTERED
 if [[ $LOG_COUNT == 0 && $INPUT == "" ]]  
@@ -459,9 +480,7 @@ then
     exit 1   
 fi
 
-#==================
 #MERGE ALL INPUT
-
 for((i=0;i<$LOG_COUNT;i++));
 do
     case ${LOG[$i]} in
@@ -477,11 +496,5 @@ do
     esac
 done
 
-#==================
-#PIPE INPUT THROUGH FILTER TO COMMAND
-
+#PIPE INPUT THROUGH FILTER TO COMMAND (COMMAND TO histogram_function with specific [WIDTH])
 echo "$INPUT" | filter | $COMMAND
-
-
-
-
