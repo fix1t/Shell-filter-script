@@ -1,5 +1,10 @@
 #! /bin/sh
 
+#==================
+#project: IOS_PROJ1
+#author : xBielG00
+#==================
+
 export POSIXLY_CORRECT=yes
 export LC_NUMERIC=en_US.UTF-8
 
